@@ -1,0 +1,86 @@
+
+# Build directories
+**/build/
+**/build-*/
+**/cmake-build-*/
+**/Debug/
+**/Release/
+**/out/
+
+# Compiled firmware and intermediate files
+*.o
+*.d
+*.a
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.su
+
+# CMake generated files (if generated outside build directories)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# IDE and editor local state
+.vs/
+.idea/
+.vscode/.browse.VC.db*
+.vscode/ipch/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files and logs
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# Local secrets and environment configuration
+.env
+.env.*
+!.env.example
+secrets/
+
+# Local AI/development working context
+/PROJECT_CONTEXT.md
+/docs/PROJECT_CONTEXT.md
+
+# Historical standalone M1 package; active implementation is under firmware/common/hil_protocol/
+/HIL_Protocol_Core_M1/
+
+# Local command output report
+/git_command_output.txt
+
+# Plant build does not use CMSIS DSP or CMSIS NN packages or ARM prebuilt math libraries
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/DSP/
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/NN/
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/RTOS/
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/RTOS2/
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/Lib/ARM/arm_cortexM3b_math.lib
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/Lib/ARM/arm_cortexM3l_math.lib
+
+# Alternative STM32F1 and ARMv8-M CMSIS templates; target uses its project startup/system files
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/Device/ST/STM32F1xx/Source/Templates/
+/firmware/plant_simulator_stm32f103/Drivers/CMSIS/Core/Template/ARMv8-M/

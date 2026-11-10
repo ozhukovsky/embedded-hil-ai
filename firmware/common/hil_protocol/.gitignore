@@ -1,0 +1,4 @@
+/build/
+/test_hil_protocol
+*.o
+*.a
