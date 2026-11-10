@@ -51,6 +51,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../common/hil_protocol/src/hil_transport.c
     ${CMAKE_CURRENT_LIST_DIR}/../common/hil_protocol/src/hil_protocol_app.c
     ${CMAKE_CURRENT_LIST_DIR}/../common/hil_protocol/src/hil_plant_model.c
+    ${CMAKE_CURRENT_LIST_DIR}/../common/hil_protocol/src/hil_plant_runtime.c
     ${CMAKE_CURRENT_LIST_DIR}/Src/hil_transport_uart.c
     ${CMAKE_CURRENT_LIST_DIR}/Src/plant_app.c
     ${CMAKE_CURRENT_LIST_DIR}/Src/plant_runtime.c

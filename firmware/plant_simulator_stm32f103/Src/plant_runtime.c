@@ -1,6 +1,7 @@
 #include "plant_runtime.h"
 #include "hil_board_transport.h"
 #include "hil_plant_model.h"
+#include "hil_plant_runtime.h"
 #include "mcp4725.h"
 #include "main.h"
 #include <string.h>
@@ -17,7 +18,8 @@ typedef struct {
     hil_plant_config_t config;
     volatile uint8_t step_pending, step_overlap, step_running;
     uint8_t config_valid, dac_valid, timer_running, fault_latched, tx_fault;
-    uint8_t heater_stage, heater_latched;
+    uint8_t heater_latched;
+    hil_plant_heater_diag_t heater_diag;
     uint16_t fault, dac_code;
     uint32_t fault_detail, run_start, next_telemetry, sample_index;
     uint32_t response_drops, telemetry_drops, over_budget, max_cycles;
@@ -86,6 +88,31 @@ static void fault_now(uint16_t code, uint16_t detail, uint32_t now) {
     }
 }
 
+static void arm_heater_diagnostic(void) {
+    GPIO_PinState initial;
+
+    /* Reset the single-byte ISR state while its IRQ is masked. Discard any
+       edge latched before the newly accepted configuration arms the check. */
+    HAL_NVIC_DisableIRQ(EXTI0_IRQn);
+    hil_plant_heater_diag_disarm(&p.heater_diag);
+    __HAL_GPIO_EXTI_CLEAR_IT(HEATER_CMD_Pin);
+    HAL_NVIC_ClearPendingIRQ(EXTI0_IRQn);
+    initial = HAL_GPIO_ReadPin(HEATER_CMD_GPIO_Port, HEATER_CMD_Pin);
+    hil_plant_heater_diag_arm(&p.heater_diag, (uint8_t)(initial == GPIO_PIN_SET));
+    __DMB();
+    __HAL_GPIO_EXTI_CLEAR_IT(HEATER_CMD_Pin);
+    HAL_NVIC_ClearPendingIRQ(EXTI0_IRQn);
+    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+static void enforce_runtime_deadline(uint32_t now) {
+    if (hil_plant_runtime_deadline_expired(
+            (uint8_t)(p.protocol.state == HIL_STATE_RUNNING), p.run_start, now,
+            p.config.max_runtime_ms)) {
+        fault_now(7U, 0U, now);
+    }
+}
+
 static void replay(void) {
     uint8_t i; hil_cached_response_t r;
     for (i=0U;i<p.commands.response_count;++i)
@@ -107,7 +134,7 @@ static void config_command(const hil_transport_frame_t *f, uint32_t now) {
         fault_now(2U,(uint16_t)HAL_I2C_GetError(&hi2c1),now); nack(f,HIL_NACK_HARDWARE_NOT_READY); return;
     }
     p.config=c; p.model=model; p.dac_code=dac; p.dac_valid=1U; p.config_valid=1U;
-    p.heater_stage=(HAL_GPIO_ReadPin(HEATER_CMD_GPIO_Port,HEATER_CMD_Pin)==GPIO_PIN_RESET)?1U:0U;
+    arm_heater_diagnostic();
     HAL_GPIO_WritePin(PLANT_VALID_GPIO_Port,PLANT_VALID_Pin,GPIO_PIN_SET); p.protocol.state=HIL_STATE_READY;sync_status();
     if (!ack_payload(f,ack,&ack_n)) return;
     response.message_type=HIL_MSG_ACK;response.payload=ack;response.payload_length=(uint16_t)ack_n;
@@ -134,7 +161,9 @@ static void command(const hil_transport_frame_t *f, uint32_t now) {
         if (f->message_type==HIL_MSG_ARM_TEST) {
             hil_armed_t armed;
             if (p.protocol.state!=HIL_STATE_READY) { nack(f,HIL_NACK_INVALID_STATE); return; }
-            if (!p.dac_valid || p.heater_stage<3U) { nack(f,HIL_NACK_HARDWARE_NOT_READY); return; }
+            if (!p.dac_valid || !hil_plant_heater_diag_complete(&p.heater_diag)) {
+                nack(f,HIL_NACK_HARDWARE_NOT_READY); return;
+            }
             if (!ack_payload(f,a,&an)) return;
             armed.role=HIL_ROLE_PLANT;armed.test_id=t.test_id;armed.readiness_flags=0x0017U;
             if (hil_encode_armed(&armed,second,sizeof(second),&sn)!=HIL_CODEC_OK) return;
@@ -174,13 +203,6 @@ static void on_frame(void *context, const hil_transport_frame_t *frame, uint32_t
     command(frame, now);
 }
 
-static void heater_test(void) {
-    GPIO_PinState v;
-    if(p.protocol.state!=HIL_STATE_READY||p.heater_stage>=3U)return;
-    v=HAL_GPIO_ReadPin(HEATER_CMD_GPIO_Port,HEATER_CMD_Pin);
-    if(p.heater_stage==1U&&v==GPIO_PIN_SET)p.heater_stage=2U;
-    else if(p.heater_stage==2U&&v==GPIO_PIN_RESET)p.heater_stage=3U;
-}
 static void telemetry(uint32_t now) {
     hil_plant_telemetry_t t;uint8_t b[HIL_PLANT_TELEMETRY_SIZE];size_t n=0U;
     t.role=HIL_ROLE_PLANT;t.test_id=p.config.test_id;t.sample_index=p.sample_index++;
@@ -227,17 +249,25 @@ uint8_t plant_runtime_init(void) {
 }
 void plant_runtime_service(void) {
     uint32_t now=HAL_GetTick(),start=DWT->CYCCNT,elapsed;
+    enforce_runtime_deadline(now);
     sync_status();
     hil_protocol_app_service(&p.protocol,now);
     if(p.protocol.boot_enqueue_failures||p.protocol.status_enqueue_failures||
        p.protocol.heartbeat_queue_full_events)p.tx_fault=1U;
-    heater_test();model_step(now);
-    if(p.protocol.state==HIL_STATE_RUNNING&&(uint32_t)(now-p.run_start)>=p.config.max_runtime_ms)fault_now(7U,0U,now);
+    now=HAL_GetTick();
+    enforce_runtime_deadline(now);
+    model_step(now);
     elapsed=DWT->CYCCNT-start;if(elapsed>p.max_cycles)p.max_cycles=elapsed;
     if(SystemCoreClock&&elapsed>SystemCoreClock/(1000U/TASK_BUDGET_MS)){++p.over_budget;fault_now(5U,2U,now);}
 }
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *timer) {
     if(timer->Instance==TIM2){if(p.step_pending||p.step_running)p.step_overlap=1U;else p.step_pending=1U;}
+}
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == HEATER_CMD_Pin) {
+        uint8_t level_high = (uint8_t)((GPIOB->IDR & HEATER_CMD_Pin) != 0U);
+        hil_plant_heater_diag_edge(&p.heater_diag, level_high);
+    }
 }
 const hil_protocol_app_t *plant_runtime_diagnostics(void){return &p.protocol;}
 uint32_t plant_runtime_max_loop_cycles(void){return p.max_cycles;}

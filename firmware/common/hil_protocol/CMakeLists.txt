@@ -12,6 +12,7 @@ add_library(hil_protocol STATIC
     src/hil_transport.c
     src/hil_protocol_app.c
     src/hil_plant_model.c
+    src/hil_plant_runtime.c
 )
 target_include_directories(hil_protocol PUBLIC include)
 target_compile_options(hil_protocol PRIVATE
@@ -61,3 +62,8 @@ add_executable(test_hil_plant_model tests/test_hil_plant_model.c)
 target_link_libraries(test_hil_plant_model PRIVATE hil_protocol)
 target_compile_options(test_hil_plant_model PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME hil_plant_model_tests COMMAND test_hil_plant_model)
+
+add_executable(test_hil_plant_runtime tests/test_hil_plant_runtime.c)
+target_link_libraries(test_hil_plant_runtime PRIVATE hil_protocol)
+target_compile_options(test_hil_plant_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME hil_plant_runtime_tests COMMAND test_hil_plant_runtime)

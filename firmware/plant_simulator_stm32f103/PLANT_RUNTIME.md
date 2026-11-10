@@ -46,6 +46,31 @@ timeout. PLANT_VALID stays low until CONFIG_SET validation and initial write
 plus register readback succeed. A successful register comparison does not
 verify VOUT electrically.
 
+## Heater-interface startup diagnostic
+
+PB0 (`HEATER_CMD`) remains an input with no internal pull and is configured
+for both rising and falling EXTI0 edges. After each valid `CONFIG_SET` has
+passed validation and the initial DAC write/readback succeeds, the runtime
+masks EXTI0, discards a stale pending edge, samples PB0, and arms the
+diagnostic from that baseline. A low baseline requires a rising edge followed
+by a falling edge. If PB0 is initially high, the diagnostic first requires a
+falling edge to establish low, then a new rising edge and a final falling
+edge. ARM_TEST continues to return `HARDWARE_NOT_READY` until the complete
+sequence is observed. Applying a new valid configuration resets the previous
+result; events before the diagnostic is armed are discarded.
+
+The HAL EXTI callback handles PB0 only. It reads the pin and advances a
+single-byte portable state machine; foreground code checks the completed
+state when processing ARM_TEST. Foreground reset masks EXTI0 while changing
+that byte, then clears pending state before re-enabling the IRQ. No protocol,
+I2C, logging, or blocking work runs in the callback.
+
+EXTI is edge-triggered, but it cannot promise capture of arbitrarily short
+pulses. The peripheral pending bit may coalesce multiple same-line edges
+before service, and a pulse shorter than the input/interrupt response limits
+may not be represented as the required sequence. Confirm pulse width and
+behavior on the actual board and wiring.
+
 ## Scheduling, telemetry, faults
 
 TIM2 retains the CubeMX 5-second configuration. START_TEST clears CNT and UIF
@@ -53,6 +78,16 @@ before enabling update interrupts. The callback only marks a pending event and
 an overlap flag. Foreground work integrates the previous heater sample, applies
 due ambient changes, samples PB0 for the next interval, writes/verifies the
 DAC, and then creates telemetry. There is no catch-up integration.
+
+`max_runtime_ms` is enforced from the regular foreground runtime service using
+the monotonic 32-bit `HAL_GetTick()` millisecond counter. The check runs before
+protocol handling and again immediately before a model step, independently of
+the 5-second TIM2 model schedule. It uses unsigned elapsed-time subtraction, so
+deadline comparison is wrap-safe for configured durations shorter than one
+full tick-counter cycle. At or after the deadline, fault 7 is latched before a
+new model step can start: TIM2 is stopped, `PLANT_VALID` is deasserted, and
+`FAULT_REPORT` plus fault-aborted `TEST_COMPLETE` are queued when a run was
+active.
 
 DWT CYCCNT measures the complete `plant_runtime_service()` foreground call,
 including shared protocol service, heater checks, and model work. A pass over
