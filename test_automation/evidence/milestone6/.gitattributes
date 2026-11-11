@@ -1,0 +1,2 @@
+# Preserve captured bytes so the recorded SHA-256 remains valid on checkout.
+plant_heater_response.csv -text
