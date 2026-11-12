@@ -23,10 +23,10 @@ The project is being developed incrementally. The Plant and DUT exchange persist
 
 Status below separates code and automated evidence from bench evidence:
 
-- **Implementation:** Milestones 1–6 are complete for their recorded scope, including the Plant hardening and physical-validation utilities. Milestone 7 DUT implementation and Milestone 8 integrated HIL operation remain incomplete.
-- **Automated checks:** Latest recorded results are 7/7 native CTest, 7/7 ASan/UBSan CTest, and 55/55 Python host tests. These are historical runs, not tests rerun for this documentation update.
-- **Build and flashing:** Both STM32 targets cross-built successfully. A later BluePill Debug ELF was built and flashed through ST-Link V2 with successful download verification; compilation and flash verification are separate from the bench observations below.
-- **Physical evidence:** The owner verified Plant UART/configuration, MCP4725 digital and selected analogue output points, PB0 LOW→HIGH→LOW and ARM_TEST, independent 2-second runtime expiry, and a normal three-step run. DWT recorded a maximum service-call duration of approximately 1.368 ms with no over-budget events. A dynamic heating/cooling experiment completed normally with 14 samples; its [CSV is preserved](test_automation/evidence/milestone6/README.md). BlackPill USB CDC communication remains the earlier M5 observation, not verification of a DUT controller.
+- **Implementation:** Milestones 1–6 are complete for their recorded scope. Milestone 7A adds DUT safe sensing (heater always LOW, one-second ADC acquisition, Plant-valid/status diagnostics). Milestone 7A implementation is complete; 7B lifecycle and 7C controller are not yet implemented, and Milestone 8 closed-loop integration is not verified.
+- **Automated checks:** The 7A implementation passed 9/9 native CTest, 9/9 ASan/UBSan CTest, and 55/55 Python host tests. The two new native executables cover nominal conversion/validity and the DUT runtime using a mock HAL; they do not establish physical behavior.
+- **Build and flashing:** Both STM32 targets passed clean 7A Debug cross-builds on November 12, 2026. The owner reported **PASS** for selected 7A physical functional checks on November 12, 2026; see the [hardware verification report](docs/verification/MILESTONE_7A_HARDWARE_VERIFICATION.md) for observations, untested items, and evidence limits. The earlier BluePill Debug download/verification remains separate Plant evidence.
+- **Physical evidence:** The owner verified Plant UART/configuration, MCP4725 digital and selected analogue output points, PB0 LOW→HIGH→LOW and ARM_TEST, independent 2-second runtime expiry, and a normal three-step run. DWT recorded a maximum service-call duration of approximately 1.368 ms with no over-budget events. A dynamic heating/cooling experiment completed normally with 14 samples; its [CSV is preserved](test_automation/evidence/milestone6/README.md). BlackPill USB CDC communication was also exercised in the selected 7A verification; DUT controller behavior remains unverified.
 - **Limits:** These selected nominal Plant experiments do not cover every hardware fault, model configuration, timing load, or analogue operating point. Full DAC accuracy and integrated HIL behavior remain unqualified.
 
 See [milestone status](docs/MILESTONE_STATUS.md) for the evidence by increment and remaining work.
@@ -42,7 +42,7 @@ See [milestone status](docs/MILESTONE_STATUS.md) for the evidence by increment a
 
 ## Build and test
 
-The shared module's standalone CMake project builds the portable code and seven native test executables. From the repository root:
+The shared module's standalone CMake project builds the portable code and nine native test executables. From the repository root:
 
 ```sh
 cmake -S firmware/common/hil_protocol -B build/host
@@ -71,6 +71,6 @@ cmake --build build/plant
 
 ## Development direction and limitations
 
-The next work is Milestone 7 (DUT controller implementation), followed by Milestone 8 (integrated HIL operation). Selected Plant communication, input, thermal-response and timing observations are recorded in the milestone evidence. Broader hardware fault coverage, worst-case timing and analogue accuracy across the DAC range remain open. Future integrated scenarios include normal regulation, invalid sensor input, sensor drift/noise, stuck heater output, communication failures, and controller reset/recovery.
+The next work is DUT startup/lifecycle and controller implementation (7B/7C), followed by Milestone 8 integrated HIL operation. Milestone 7A implementation and its selected physical functional verification are complete. Selected Plant communication, input, thermal-response and timing observations are recorded in the milestone evidence. Broader hardware fault coverage, worst-case timing and analogue accuracy across the DAC range remain open. Future integrated scenarios include normal regulation, invalid sensor input, sensor drift/noise, stuck heater output, communication failures, and controller reset/recovery.
 
 This repository explores AI-assisted validation; it does not yet claim completed AI-based test generation or analysis. No project license is declared here. Check the repository and vendor attribution files before reuse or redistribution.

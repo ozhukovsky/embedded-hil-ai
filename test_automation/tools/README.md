@@ -357,6 +357,153 @@ still require their own wiring checks, current VCC measurement, and result
 capture. The latest recorded Python host regression run passed 55/55 tests;
 it remains separate from bench evidence and was not rerun for this documentation update.
 
+## DUT 7A safe sensing bench check
+
+This is a procedure for the owner, **not a record of physical verification**.
+Use the unchanged architecture wiring/power arrangement and external pull-downs.
+No heater/actuator is connected. Keep the DUT PB0 to Plant PB0 link connected;
+do not use the M6 manual-HIGH utilities for this procedure. The DUT must never
+produce HIGH in 7A. Do not ARM or START either board.
+
+1. Record revision, compiler, configuration and ELF hash for
+   `build/dut-7a/dut_stm32f411.elf`. Flash it yourself and reset the DUT/Plant.
+   Probe HEATER_CMD at both boards with a logic analyser; require LOW during
+   reset, startup and every check below. Software fault-handler writes are best
+   effort; they cannot guarantee output safety under arbitrary hardware faults.
+2. Before Plant configuration, inspect `d` with `dut_runtime.c` selected in a
+   matching Debug session. Require `plant_valid=0`, `feedback_valid=0`, no runtime
+   fault, protocol state WAIT_CONFIG (2), test ID 0, STATUS bits 0/1/2 all zero.
+   Raw ADC may still reflect a retained DAC voltage; this does not make it valid.
+3. Run the existing DUT USB check (replace COM ports):
+
+   ```powershell
+   python test_automation/tools/hil_smoke_test.py --port COM4 --role dut
+   ```
+
+   Require a valid DUT STATUS and continued 1000 ms heartbeats. BOOT_REPORT is
+   sent once when USB becomes ready and need not replay on a later connection.
+   If captured, require firmware 0.7.0 and capabilities 0x0035 (USB, ADC, TIM2,
+   HIL GPIO). Cold-start and enumeration are new bench checks, not proved by
+   the earlier M5 USB observation. This smoke utility validates STATUS fields
+   but does not display raw ADC or all flag values; inspect `protocol` and `d`
+   in the debugger, or decode the existing STATUS payload.
+
+   After audit remediation, boot/heartbeat TX submission waits for configured
+   CDC with class data available; a blocked STATUS response is retained and
+   retried before a new heartbeat. Configuration still does not prove the PC
+   application is reading. Verify a single STATUS_REQUEST receives a response
+   after temporary TX backpressure clears. Repeated blocked polls coalesce into
+   one current snapshot; the pending flag clears on enqueue, not USB completion.
+4. Configure the Plant without starting it:
+
+   ```powershell
+   python test_automation/tools/plant_bringup.py --port COM3
+   ```
+
+   Its existing default is initial/ambient 20000 mC, yielding DAC 2050. Verify
+   Plant ACK/READY and PB1 HIGH. After the next DUT acquisition, expect STATUS
+   bits 0 and 2 set and bit 1 clear (flags 0x0005 without other diagnostics).
+   The DUT remains WAIT_CONFIG; the Plant's unfinished heater diagnostic is
+   expected and is not part of 7A.
+5. Watch `d.timer_events`, `sample_attempts`, `samples_acquired`,
+   `last_attempt_ms`, `last_sample_ms`, `adc_raw`, `temperature_mC`,
+   `sample_result`, `adc_error`, and `feedback_valid`. Require one acquisition
+   per second, no overlap/errors, and `max_acquisition_ms <=100`. A provisional
+   timestamp-interval check is 1000 +/-10 ms during this idle bench test; measure
+   actual timing before treating that as a qualified bound. Avoid halting during
+   timing measurement. Debugger halts can allow timer events to coalesce and do
+   not constitute a normal workload.
+
+   The runtime now checks the expected callback schedule even if no callback
+   arrives. Each event is due on the original 1000 ms phase with **10 ms**
+   provisional delivery tolerance; >10 ms late (including a missing first
+   callback) latches fault 5/detail 3. A late ISR cannot rebase that deadline.
+   Overlap is detail 1; acquisition >100 ms is detail 2. Inspect `next_event_ms`
+   and `event_late` in `d`. No catch-up or automatic recovery is performed.
+   The comparison requires a progressing HAL tick and service within 2^31 ms.
+   Observed sample expiry permanently removes its qualification while retaining
+   raw/timestamp history. A timing fault additionally requires reset before
+   acquisition can resume.
+6. Check selected static Plant-configured points. The default tool covers 20 C.
+   Other points use ordinary Plant CONFIG_SET while Plant is READY, with initial
+   and ambient temperature equal to the table value, `tau_s=300`, heater gain
+   **0**, both periods 5000 ms, max runtime 600000 ms and no disturbances. Zero
+   gain keeps the +60 C configuration inside the Plant envelope. Use a fresh
+   command sequence for each changed configuration, wait for its matching ACK
+   and valid READY status, then wait at least two DUT samples before measuring.
+   No new firmware, custom protocol or standalone utility is required. For an
+   interactive sender, reuse the existing frame encoder from the repo root:
+
+   ```python
+   import sys, struct, serial
+   sys.path.insert(0, "test_automation/tools")
+   import hil_smoke_test as wire
+   p = serial.Serial("COM3", 115200, timeout=0.1)
+   seq, test_id, temp_mC = 100, 2, -20000
+   payload = struct.pack("<BIiiIiHHIB", 2, test_id, temp_mC, temp_mC,
+                         300, 0, 5000, 5000, 600000, 0)
+   p.write(wire.encode_frame(0x10, seq, payload))
+   parser = wire.StreamParser()
+   frames = parser.feed(p.read(256))  # repeat reads; print/inspect parsed ACK/NACK
+   [(hex(f.message_type), f.payload.hex()) for f in frames]
+   ```
+
+   Keep the parser across reads. Confirm ACK 0x20 has the command sequence,
+   acknowledged type 0x10, role 2 and error 0; send STATUS_REQUEST (0x04) with a
+   fresh sequence and decode READY=3, fault=0 and flags bits 0/3 set. Do not
+   proceed on NACK or missing confirmation. Repeat with new sequence/test ID
+   and `temp_mC=60000`, rebuilding the payload; close `p` before another utility
+   opens COM3. This is an interactive example, not a stop-and-wait test runner.
+
+   | Configured temperature | DAC code | Ideal ADC, ratio=1 | Ideal converted result | Predicted VOUT at VCC=3.3 V |
+   |---|---:|---:|---:|---:|
+   | -20 C | 100 | 100 | -20000 mC | 0.08057 V |
+   | +20 C | 2050 | 2050 | 20000 mC | 1.65161 V |
+   | +60 C | 4000 | 4000 | 60000 mC | 3.22266 V |
+
+   These are nominal expectations, not measured results. Measure the current
+   DAC supply and VOUT separately; predicted VOUT is VCC*code/4096. The initial
+   proposed point-comparison tolerance is **+/-32 ADC counts**, approximately
+   **+/-0.657 C** with the nominal inverse. The global plausibility range is
+   separately 68..4032. Neither is calibrated/physically verified. One ADC count
+   is approximately 20.513 mC; nearest-mC software rounding contributes <=0.5 mC.
+   Historical endpoint/noise observations motivated the 32-count allowance,
+   not a fitted gain/offset calibration. DAC 2048 corresponds nominally to
+   19.959 C, not exactly 20 C.
+7. Reset the Plant while the DUT continues. Require observed PB1 LOW, STATUS
+   bit 0/bit 2 clear, and PB0 LOW; DUT stays WAIT_CONFIG without fault 4. After
+   reconfiguration, bit 2 must wait for a new successful sample after HIGH.
+   Brief LOW/HIGH glitches between polls are not guaranteed to be detected.
+8. For invalid analogue input, first isolate PA1 from DAC VOUT, then tie the
+   isolated ADC input to GND. Require raw near zero, OUT_OF_RANGE (8), increasing
+   range-error count, feedback bit 2 clear and PB0 LOW. Never short the driven
+   DAC output. An open input alone can float into range and cannot prove this
+   check. Restore wiring and require a fresh valid sample to recover.
+9. An analogue disconnect does not cause an ADC completion timeout. For a
+   controlled debugger-only timeout test, break just before `HAL_ADC_Start`
+   with the previous conversion stopped. In the debugger set
+   `hadc1.Instance->CR2 = (hadc1.Instance->CR2 & ~0x3F000000U) | 0x10000000U`
+   (EXTSEL=TIM1_CC1, EXTEN=rising); TIM1 is not configured in this firmware.
+   This suppresses HAL software start and waits for an absent trigger. Merely
+   changing `hadc1.Init` would not change the hardware trigger bits used by
+   HAL_ADC_Start. Resume with SysTick running. Expect a 5 ms poll
+   timeout (tick granularity adds latency), `sample_result=3`, poll status
+   HAL_TIMEOUT=3, `sample_ok=0`, bit 2 clear, cleanup attempted, and PB0 LOW.
+   Reset immediately to restore the generated configuration; reconfigure the
+   Plant if needed. This debugger intervention deliberately invalidates normal
+   timing evidence. Host tests already cover timeout/error logic; this bench
+   injection remains unverified.
+
+The declared getter `dut_runtime_snapshot()` may be garbage-collected when
+unreferenced; inspect retained `d` directly with the matching ELF. Coherent
+multi-field reads may require a halt; keep those separate from timing captures.
+STATUS can additionally show bit 5 after TX queue overflow (for example with
+configured CDC but a non-reading host). That indication latches through
+counters; reset before a clean regression capture. Timer overlap or acquisition
+>100 ms enters latched FAULT (5); TIM2 start failure uses fault 6. Capture status,
+snapshot, probe results and measured voltages; do not call 7A physically verified
+until these checks have actually been performed.
+
 ## Host regression tests
 
 From the repository root:

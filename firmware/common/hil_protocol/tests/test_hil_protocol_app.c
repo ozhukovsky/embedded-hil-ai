@@ -98,23 +98,26 @@ static void test_queue_full_and_heartbeat(void) {
     assert(hil_transport_tx_enqueue(&transport, &filler, HIL_TRANSPORT_CONTROL) == HIL_TRANSPORT_OK);
     inject_status_request(&transport, 9U);
     hil_protocol_app_service(&app, 1U);
-    assert(app.status_enqueue_failures == 1U && app.tx_sequence.next_sequence == 1U);
+    assert(app.status_pending && app.status_enqueue_failures == 1U && app.tx_sequence.next_sequence == 1U);
     hil_protocol_app_service(&app, 999U);
     assert(app.heartbeat_pending == 0U);
     hil_protocol_app_service(&app, 1000U);
-    assert(app.heartbeat_pending != 0U && app.heartbeat_queue_full_events == 1U);
+    assert(app.heartbeat_pending != 0U && app.heartbeat_queue_full_events == 0U);
     (void)hil_transport_tx_pop(&transport);
     hil_protocol_app_service(&app, 1001U);
-    assert(app.heartbeat_pending == 0U);
+    assert(app.status_pending == 0U && app.heartbeat_pending != 0U);
     assert(hil_transport_tx_peek(&transport, &wire, &priority) == HIL_TRANSPORT_OK);
-    /* Filler remains at the head; pop it, then inspect heartbeat. */
+    /* Retried STATUS takes the free slot before HEARTBEAT. */
     assert(wire.bytes[3] == HIL_MSG_STATUS);
     assert(hil_transport_tx_pop_priority(&transport, priority) == HIL_TRANSPORT_OK);
     wire = dequeue(&transport);
-    assert(wire.bytes[3] == HIL_MSG_HEARTBEAT && wire.bytes[4] == 1U);
+    assert(wire.bytes[3] == HIL_MSG_STATUS && wire.bytes[4] == 1U);
+    hil_protocol_app_service(&app, 1002U);
+    wire = dequeue(&transport);
+    assert(wire.bytes[3] == HIL_MSG_HEARTBEAT && wire.bytes[4] == 2U);
     assert(hil_decode_heartbeat(&wire.bytes[8], 10U, &heartbeat) == HIL_CODEC_OK);
     assert(heartbeat.role == HIL_ROLE_DUT && heartbeat.state == HIL_STATE_INITIALIZING &&
-           heartbeat.uptime_ms == 1001U);
+           heartbeat.uptime_ms == 1002U);
     assert(app.heartbeat_missed_periods == 0U);
 
     hil_transport_init(&transport);
@@ -154,10 +157,43 @@ static void test_board_hook_and_dynamic_status(void) {
            status.test_id==77U&&status.status_flags==9U);
 }
 
+static void test_status_backpressure_for_both_roles(void) {
+    uint8_t role;
+    for (role = HIL_ROLE_DUT; role <= HIL_ROLE_PLANT; ++role) {
+        hil_transport_t transport;
+        hil_protocol_app_t app;
+        hil_transport_wire_frame_t wire;
+        hil_status_message_t status;
+        hil_transport_init(&transport);
+        assert(hil_protocol_app_init(&app, &transport, role, 0U, 0U) == HIL_CODEC_OK);
+        assert(app.transport_ready); /* Plant/UART does not need a new caller. */
+        hil_protocol_app_service(&app, 0U);
+        hil_protocol_app_service(&app, 1000U); /* BOOT + HEARTBEAT, no completion */
+        inject_status_request(&transport, 42U);
+        hil_protocol_app_service(&app, 1001U);
+        assert(app.status_pending && app.tx_sequence.next_sequence == 2U);
+        hil_protocol_app_set_status(&app, HIL_STATE_FAULT, 5U, 77U, 16U);
+        wire = dequeue(&transport);
+        assert(wire.bytes[3] == HIL_MSG_BOOT_REPORT && wire.bytes[4] == 0U);
+        hil_protocol_app_service(&app, 1002U);
+        assert(!app.status_pending && app.tx_sequence.next_sequence == 3U);
+        wire = dequeue(&transport);
+        assert(wire.bytes[3] == HIL_MSG_HEARTBEAT && wire.bytes[4] == 1U);
+        wire = dequeue(&transport);
+        assert(wire.bytes[3] == HIL_MSG_STATUS && wire.bytes[4] == 2U);
+        assert(hil_decode_status(wire.bytes + 8, 14U, &status) == HIL_CODEC_OK);
+        assert(status.role == role && status.state == HIL_STATE_FAULT && status.fault_code == 5U);
+        assert(status.test_id == 77U && status.uptime_ms == 1002U && status.status_flags == 16U);
+        hil_protocol_app_service(&app, 1003U);
+        assert(hil_transport_tx_pop(&transport) == HIL_TRANSPORT_EMPTY);
+    }
+}
+
 int main(void) {
     test_boot_status_sequences_and_roles();
     test_queue_full_and_heartbeat();
     test_board_hook_and_dynamic_status();
+    test_status_backpressure_for_both_roles();
     puts("HIL application tests passed");
     return 0;
 }

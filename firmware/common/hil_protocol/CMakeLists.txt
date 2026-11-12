@@ -67,3 +67,24 @@ add_executable(test_hil_plant_runtime tests/test_hil_plant_runtime.c)
 target_link_libraries(test_hil_plant_runtime PRIVATE hil_protocol)
 target_compile_options(test_hil_plant_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME hil_plant_runtime_tests COMMAND test_hil_plant_runtime)
+
+# DUT-only portable sensing and foreground integration; no HAL/vendor sources
+# are added to the shared library or the Plant firmware.
+set(DUT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../dut_stm32f411)
+add_executable(test_dut_sensing
+    ${DUT_SOURCE_DIR}/tests/test_dut_sensing.c
+    ${DUT_SOURCE_DIR}/Src/dut_sensing.c
+)
+target_include_directories(test_dut_sensing PRIVATE ${DUT_SOURCE_DIR}/Inc)
+target_compile_options(test_dut_sensing PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME dut_sensing_tests COMMAND test_dut_sensing)
+
+add_executable(test_dut_runtime
+    ${DUT_SOURCE_DIR}/tests/test_dut_runtime.c
+    ${DUT_SOURCE_DIR}/Src/dut_runtime.c
+    ${DUT_SOURCE_DIR}/Src/dut_sensing.c
+)
+target_include_directories(test_dut_runtime PRIVATE ${DUT_SOURCE_DIR}/tests/stubs ${DUT_SOURCE_DIR}/Inc)
+target_link_libraries(test_dut_runtime PRIVATE hil_protocol)
+target_compile_options(test_dut_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME dut_runtime_tests COMMAND test_dut_runtime)

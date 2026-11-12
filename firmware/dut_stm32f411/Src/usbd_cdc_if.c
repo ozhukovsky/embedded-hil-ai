@@ -284,12 +284,18 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
 {
   uint8_t result = USBD_OK;
   /* USER CODE BEGIN 7 */
+  /* USB reset/deinit must not invalidate the class data between this check
+     and submission. The short critical section contains no polling/waits. */
+  uint32_t irq_mask = __get_PRIMASK();
+  __disable_irq();
   USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
-  if (hcdc->TxState != 0){
+  if (hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED || hcdc == NULL || hcdc->TxState != 0){
+    __set_PRIMASK(irq_mask);
     return USBD_BUSY;
   }
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
   result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
+  __set_PRIMASK(irq_mask);
   /* USER CODE END 7 */
   return result;
 }

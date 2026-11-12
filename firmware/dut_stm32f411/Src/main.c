@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "hil_board_transport.h"
 #include "dut_app.h"
+#include "dut_runtime.h"
 
 /* USER CODE END Includes */
 
@@ -307,6 +308,7 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
+  dut_force_safe_output();
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)

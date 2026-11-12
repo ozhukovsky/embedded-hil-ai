@@ -15,6 +15,16 @@ This directory contains the portable Protocol V1.0 framing, payload codecs, reli
 
 Board-specific peripheral adapters and application/runtime integration remain in each STM32 project. USB CDC, USART/HAL callbacks, ADC/I2C device access, board GPIO, timers, and board state transitions are not implemented by this hardware-independent module.
 
+The app retains one pending STATUS snapshot if the control TX queue is full;
+blocked polls coalesce and the current state is serialized when enqueue succeeds.
+Retries precede periodic heartbeat generation and do not allocate a sequence
+until successful enqueue. Already queued frames keep their FIFO order. The DUT
+uses `hil_protocol_app_set_transport_ready()` to defer boot/status/heartbeat TX
+until CDC is configured with valid class data; RX continues. The default is
+ready, preserving the Plant/UART integration. Configured CDC does not prove a
+reading PC application, so pending STATUS retry is still needed. This is bounded
+queue handling, not complete USB reconnect recovery.
+
 ## Native tests
 
 Requires CMake 3.16+ and a C99 compiler. From the repository root:
@@ -25,7 +35,7 @@ cmake --build build/host
 ctest --test-dir build/host --output-on-failure
 ```
 
-The standalone project enables warnings as errors and defines seven CTest executables covering framing, message codecs, reliability, transport, application service, the Plant model, and portable Plant runtime helpers. Use a separate build tree with sanitizer compiler/linker flags when running ASan/UBSan; see the repository milestone status for recorded historical results. Selected physical Plant observations are separate evidence and do not replace these host checks.
+The standalone project enables warnings as errors and defines nine CTest executables. Seven cover framing, message codecs, reliability, transport, application service, the Plant model, and portable Plant runtime helpers. Two additional executables compile DUT-only sources to test nominal ADC conversion/validity and the foreground sensing runtime with a minimal HAL stub. These sources are not added to the shared library or Plant firmware. Use a separate build tree with sanitizer compiler/linker flags when running ASan/UBSan; see milestone status for results. Physical observations remain separate evidence.
 
 ## STM32 integration
 

@@ -23,6 +23,7 @@ typedef struct {
     hil_tx_sequence_t tx_sequence;
     hil_rx_sequence_monitor_t rx_sequence;
     uint8_t role, state, boot_pending, heartbeat_pending, heartbeat_blocked;
+    uint8_t transport_ready, status_pending;
     uint16_t capabilities;
     uint8_t fw_major, fw_minor, fw_patch;
     uint16_t fault_code, status_flags;
@@ -41,6 +42,11 @@ hil_codec_status_t hil_protocol_app_init(hil_protocol_app_t *app,
                                           uint32_t now_ms);
 /* Bounded foreground work; `now_ms` is a monotonic tick such as HAL_GetTick(). */
 void hil_protocol_app_service(hil_protocol_app_t *app, uint32_t now_ms);
+/* Default ready for the UART/Plant. A DUT can defer boot/status/heartbeat TX
+   until CDC is configured; RX still runs. Readiness is not host receipt.
+   One current STATUS snapshot is retained under backpressure; blocked polls
+   coalesce. The pending flag clears only after a successful enqueue. */
+void hil_protocol_app_set_transport_ready(hil_protocol_app_t *app, uint8_t ready);
 void hil_protocol_app_set_frame_handler(hil_protocol_app_t *app,
                                         hil_protocol_app_frame_handler_t handler,
                                         void *context);

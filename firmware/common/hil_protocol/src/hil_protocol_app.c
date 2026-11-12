@@ -35,6 +35,10 @@ void hil_protocol_app_set_frame_handler(hil_protocol_app_t *app,
     app->frame_handler_context = context;
 }
 
+void hil_protocol_app_set_transport_ready(hil_protocol_app_t *app, uint8_t ready) {
+    if (app != NULL) app->transport_ready = (uint8_t)(ready != 0U);
+}
+
 void hil_protocol_app_set_status(hil_protocol_app_t *app, uint8_t state,
                                  uint16_t fault_code, uint32_t test_id,
                                  uint16_t status_flags) {
@@ -86,8 +90,9 @@ static void queue_status(hil_protocol_app_t *app, uint32_t now_ms) {
     status.status_flags = app->status_flags;
     if (hil_encode_status(&status, payload, sizeof(payload), &length) != HIL_CODEC_OK ||
         queue_message(app, HIL_MSG_STATUS, payload, (uint16_t)length,
-                      HIL_TRANSPORT_CONTROL) != HIL_CODEC_OK)
+                      HIL_TRANSPORT_CONTROL) != HIL_CODEC_OK) {
         ++app->status_enqueue_failures;
+    } else app->status_pending = 0U;
 }
 
 static void process_rx(hil_protocol_app_t *app, uint32_t now_ms) {
@@ -102,9 +107,10 @@ static void process_rx(hil_protocol_app_t *app, uint32_t now_ms) {
         if (frame.message_type == HIL_MSG_STATUS_REQUEST) {
             hil_status_request_t request;
             ++app->status_requests;
-            if (hil_decode_status_request(frame.payload, frame.payload_length, &request) == HIL_CODEC_OK)
-                queue_status(app, now_ms);
-            else
+            if (hil_decode_status_request(frame.payload, frame.payload_length, &request) == HIL_CODEC_OK) {
+                app->status_pending = 1U;
+                if (app->transport_ready != 0U) queue_status(app, now_ms);
+            } else
                 ++app->malformed_status_requests;
         } else if (app->frame_handler != NULL) {
             app->frame_handler(app->frame_handler_context, &frame, now_ms);
@@ -125,7 +131,8 @@ static void service_heartbeat(hil_protocol_app_t *app, uint32_t now_ms) {
             if (periods > 1U) app->heartbeat_missed_periods += periods - 1U;
         }
     }
-    if (app->heartbeat_pending != 0U) {
+    if (app->heartbeat_pending != 0U && app->transport_ready != 0U &&
+        app->boot_pending == 0U && app->status_pending == 0U) {
         hil_heartbeat_t heartbeat;
         uint8_t payload[10];
         size_t length = 0U;
@@ -161,6 +168,7 @@ hil_codec_status_t hil_protocol_app_init(hil_protocol_app_t *app,
     app->fw_patch = HIL_APP_FW_PATCH;
     app->last_heartbeat_ms = now_ms;
     app->boot_pending = 1U;
+    app->transport_ready = 1U;
     if (hil_tx_sequence_init(&app->tx_sequence) != HIL_CODEC_OK ||
         hil_rx_sequence_monitor_init(&app->rx_sequence) != HIL_CODEC_OK)
         return HIL_CODEC_INVALID_VALUE;
@@ -169,7 +177,10 @@ hil_codec_status_t hil_protocol_app_init(hil_protocol_app_t *app,
 
 void hil_protocol_app_service(hil_protocol_app_t *app, uint32_t now_ms) {
     if (app == NULL || app->transport == NULL) return;
-    if (app->boot_pending != 0U) queue_boot_report(app, now_ms);
+    if (app->transport_ready != 0U) {
+        if (app->boot_pending != 0U) queue_boot_report(app, now_ms);
+        if (app->status_pending != 0U) queue_status(app, now_ms);
+    }
     process_rx(app, now_ms);
     service_heartbeat(app, now_ms);
 }

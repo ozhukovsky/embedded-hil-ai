@@ -13,6 +13,15 @@ static volatile uint8_t rx_rearm_needed;
 static hil_transport_priority_t tx_priority;
 
 hil_transport_t *dut_transport_instance(void) { return &transport; }
+uint8_t dut_transport_ready(void) {
+    uint32_t irq_mask = __get_PRIMASK();
+    uint8_t ready;
+    __disable_irq();
+    ready = (uint8_t)(hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED &&
+                       hUsbDeviceFS.pClassData != NULL);
+    __set_PRIMASK(irq_mask);
+    return ready;
+}
 void dut_transport_init(void) {
     hil_transport_init(&transport);
     tx_busy = 0U; tx_complete = 0U; rx_rearm_needed = 0U;
@@ -34,8 +43,13 @@ void dut_transport_service(void) {
     hil_transport_wire_frame_t frame;
     uint8_t result;
     (void)hil_transport_rx_service(&transport, HIL_TRANSPORT_RX_BUDGET);
-    if (rx_rearm_needed != 0U)
-        dut_usb_rx_rearm_result(USBD_CDC_ReceivePacket(&hUsbDeviceFS));
+    if (rx_rearm_needed != 0U) {
+        uint32_t irq_mask = __get_PRIMASK();
+        __disable_irq();
+        if (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED && hUsbDeviceFS.pClassData != NULL)
+            dut_usb_rx_rearm_result(USBD_CDC_ReceivePacket(&hUsbDeviceFS));
+        __set_PRIMASK(irq_mask);
+    }
     if (tx_complete != 0U) {
         tx_complete = 0U;
         (void)hil_transport_tx_pop_priority(&transport, tx_priority);

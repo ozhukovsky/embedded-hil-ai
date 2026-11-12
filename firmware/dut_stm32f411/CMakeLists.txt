@@ -52,6 +52,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../common/hil_protocol/src/hil_protocol_app.c
     ${CMAKE_CURRENT_LIST_DIR}/Src/hil_transport_usb.c
     ${CMAKE_CURRENT_LIST_DIR}/Src/dut_app.c
+    ${CMAKE_CURRENT_LIST_DIR}/Src/dut_runtime.c
+    ${CMAKE_CURRENT_LIST_DIR}/Src/dut_sensing.c
 )
 
 # Add include paths
